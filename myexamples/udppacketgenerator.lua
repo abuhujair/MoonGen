@@ -34,6 +34,8 @@ function configure(parser)
 	parser:option("-r --rate", "Transmit rate in Mbit/s."):default(10000):convert(tonumber)
 	parser:option("-f --flows", "Number of flows (randomized source IP)."):default(1):convert(tonumber)
 	parser:option("-s --size", "Packet size."):default(1500):convert(tonumber)
+	parser:option("-t --time", "Run Time in s."):default(30):convert(tonumber)
+	parser:option("-p --ports", "NUmber of Ports"):default(1):convert(tonumber)
 end
 
 function master(args)
@@ -45,8 +47,8 @@ function master(args)
 	if args.rate > 0 then
 		txDev:getTxQueue(0):setRate(args.rate - (args.size + 4) * 8 / 1000)
 	end
-	mg.startTask("loadSlave", txDev:getTxQueue(0), rxDev, args.size, args.flows)
-	mg.startTask("timerSlave", txDev:getTxQueue(1), rxDev:getRxQueue(1), args.size, args.flows)
+	mg.startTask("loadSlave", txDev:getTxQueue(0), rxDev, args.size, args.flows, args.time, args.ports)
+	-- mg.startTask("timerSlave", txDev:getTxQueue(1), rxDev:getRxQueue(1), args.size, args.flows)
 	arp.startArpTask{
 		-- run ARP on both ports
 		{ rxQueue = rxDev:getRxQueue(2), txQueue = rxDev:getTxQueue(2), ips = RX_IP },
@@ -95,7 +97,7 @@ local function doArp()
 	log:info("Destination mac: %s", DST_MAC)
 end
 
-function loadSlave(queue, rxDev, size, flows)
+function loadSlave(queue, rxDev, size, flows, time, ports)
 	doArp()
 	local mempool = memory.createMemPool(function(buf)
         -- Create a random HTTP request/response payload
@@ -105,15 +107,20 @@ function loadSlave(queue, rxDev, size, flows)
     end)
 	local bufs = mempool:bufArray()
 	local counter = 0
+	local portCounter = 0
 	local txCtr = stats:newDevTxCounter(queue, "plain")
 	local rxCtr = stats:newDevRxCounter(rxDev, "plain")
 	local baseIP = parseIPAddress(SRC_IP_BASE)
+
+	mg.setRuntime(time)
 	while mg.running() do
 		bufs:alloc(MAX_PACKET_SIZE)
 		for i, buf in ipairs(bufs) do
 			local pkt = buf:getUdpPacket()
 			pkt.ip4.src:set(baseIP + counter)
+			-- pkt.udp:setDstPort(DST_PORT + portCounter)
 			counter = incAndWrap(counter, flows)
+			-- portCounter = incAndWrap(portCounter, ports)
 		end
 		-- UDP checksums are optional, so using just IPv4 checksums would be sufficient here
 		bufs:offloadUdpChecksums()
